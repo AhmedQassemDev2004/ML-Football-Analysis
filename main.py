@@ -8,7 +8,10 @@ from config import *
 def main():
     video_frames = read_video(INPUT_VIDEO_PATH)
     tracker = Tracker(MODEL_PATH)
-    tracks = tracker.get_object_tracks(video_frames, read_from_stub=False, stub_path=STUB_PATH)
+    tracks = tracker.get_object_tracks(video_frames, read_from_stub=True, stub_path=STUB_PATH)
+
+    tracks['ball'] = tracker.interpolate_ball_positions(tracks['ball'])
+
     print(f"Number of player track frames: {len(tracks['players'])}")
     print(f"Number of ball track frames: {len(tracks['ball'])}")
     print(f"Number of referee track frames: {len(tracks['referees'])}")

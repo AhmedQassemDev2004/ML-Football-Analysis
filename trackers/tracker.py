@@ -6,12 +6,28 @@ from utils import get_bbox_width, get_center_of_bbox
 import cv2
 import numpy as np
 from config import *
-
+import pandas as pd
 
 class Tracker:
     def __init__(self, model_path):
         self.model = YOLO(model_path)
         self.tracker = sv.ByteTrack()
+
+    def interpolate_ball_positions(self, ball_positions):
+        ball_positions = [x.get(1, {}).get('bbox', []) for x in ball_positions]
+        
+        df_ball_positions = pd.DataFrame(ball_positions)
+        df_ball_positions = df_ball_positions.interpolate()
+        df_ball_positions = df_ball_positions.bfill()  # for special case when the first detection is missing
+        
+        # Fill any remaining NaN values with empty lists to avoid conversion errors
+        df_ball_positions = df_ball_positions.fillna(0)
+
+        ball_positions = [{1: {'bbox':x}} for x in df_ball_positions.to_numpy().tolist()]
+
+        return ball_positions
+        
+
 
     def detect_frames(self, frames):
         detections = []
@@ -142,6 +158,10 @@ class Tracker:
         return frame
 
     def draw_triangle(self, frame, bbox, color, track_id):
+        # Skip drawing if bbox is invalid (contains NaN, zeros, or insufficient data)
+        if not bbox or len(bbox) < 4 or any(np.isnan(bbox)) or all(x == 0 for x in bbox):
+            return frame
+            
         y2 = int(bbox[3])
         x_center, _ = get_center_of_bbox(bbox)
         bbox_width = get_bbox_width(bbox)
