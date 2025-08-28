@@ -110,14 +110,16 @@ class Tracker:
             # draw players
             for track_id, player in players_dict.items():
                 frame = self.draw_ellipse(frame, player['bbox'], player['team_color'], track_id)
-            
+                if player.get('has_ball', False):
+                    frame = self.draw_traingle(frame, player['bbox'], (0, 0, 255))
+
             # draw referees
             for _, referee in referees_dict.items():
                 frame = self.draw_ellipse(frame, referee['bbox'], REFEREE_COLOR)
             
             # draw ball
             for track_id, ball in ball_dict.items():
-                frame = self.draw_triangle(frame, ball['bbox'], BALL_COLOR, track_id)
+                frame = self.draw_traingle(frame, ball['bbox'], BALL_COLOR)
             
             output_video_frames.append(frame)
 
@@ -157,21 +159,17 @@ class Tracker:
 
         return frame
 
-    def draw_triangle(self, frame, bbox, color, track_id):
-        # Skip drawing if bbox is invalid (contains NaN, zeros, or insufficient data)
-        if not bbox or len(bbox) < 4 or any(np.isnan(bbox)) or all(x == 0 for x in bbox):
-            return frame
-            
-        y2 = int(bbox[3])
-        x_center, _ = get_center_of_bbox(bbox)
-        bbox_width = get_bbox_width(bbox)
+    def draw_traingle(self,frame,bbox,color):
+    
+        y= int(bbox[1])
+        x,_ = get_center_of_bbox(bbox)
 
         triangle_points = np.array([
-            [x_center - bbox_width//2, y2],
-            [x_center + bbox_width//2, y2], 
-            [x_center, y2 - bbox_width//2]
-        ], np.int32)
-
-        cv2.drawContours(frame, [triangle_points], 0, color, 2)
+            [x,y],
+            [x-10,y-20],
+            [x+10,y-20],
+        ])
+        cv2.drawContours(frame, [triangle_points],0,color, cv2.FILLED)
+        cv2.drawContours(frame, [triangle_points],0,(0,0,0), 2)
 
         return frame
