@@ -99,10 +99,10 @@ class TeamAssigner:
         # Convert from {0,1} to {1,2}
         team_id += 1
 
-        # Special case: force player 91 into team 1 (custom rule)
-        if player_id == 91:
-            team_id = 1
-
+        # hard code the team 2 goalkeeper
+        # TODO: Fix Later for goalkeeper team assigment
+        if player_id in [98,124, 91]:
+            team_id=2
         # Save assignment
         self.player_team_dict[player_id] = team_id
 
