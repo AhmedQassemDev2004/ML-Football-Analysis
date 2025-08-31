@@ -82,7 +82,7 @@ Output video: `output_videos/match_annotated.mp4`
 ---
 
 ## 🛠️ Future Improvements  
-
+- [ ] Improve Players distance and speed detection
 - [ ] Better Goalkeeper to team assigment ( Temporarily hard coded untill fix )
 - [ ] Improve homography calibration (automatic line detection)  
 - [ ] Add pass & event detection (e.g., shots, tackles)  
