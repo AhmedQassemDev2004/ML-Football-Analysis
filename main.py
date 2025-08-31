@@ -7,6 +7,7 @@ from config import *
 from player_ball_assigner import PlayerBallAssigner
 from camera_movement_estimator import CameraMovementEstimator
 from view_transformer import ViewTransformer
+from speed_distance_estimator import SpeedDistanceEstimator
 
 
 def main():
@@ -36,6 +37,9 @@ def main():
     view_transformer = ViewTransformer()
     view_transformer.add_transformed_position_to_tracks(tracks)
 
+    # Speed And Distance Estimator
+    speed_distance_estimator = SpeedDistanceEstimator()
+    speed_distance_estimator.add_speed_and_distance_to_tracks(tracks)
 
     team_assigner = TeamAssigner()
     team_assigner.assign_team_color(video_frames[0], tracks['players'][0])
@@ -61,7 +65,11 @@ def main():
 
     # Draw camera movement visualization and annotations
     output_video_frames = camera_movement_estimator.draw_camera_movement(video_frames, camera_movement_per_frame)
+
     output_video_frames = tracker.draw_annotations(output_video_frames, tracks, team_ball_control)
+
+    output_video_frames = speed_distance_estimator.draw_speed_and_distance(output_video_frames, tracks)
+
     save_video(output_video_frames, OUTPUT_VIDEO_PATH)
 
 if __name__ == '__main__':

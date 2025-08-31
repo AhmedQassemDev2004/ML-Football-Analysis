@@ -20,12 +20,11 @@ class ViewTransformer:
             [self.court_length, 0],
             [self.court_length, self.court_width],
         ])
-
         self.pixel_vertices = self.pixel_vertices.astype(np.float32)
         self.target_vertices = self.target_vertices.astype(np.float32)
 
 
-        self.perspective_transformer = cv2.getPerspectiveTransform(self.target_vertices, self.pixel_vertices)
+        self.perspective_transformer = cv2.getPerspectiveTransform(self.pixel_vertices, self.target_vertices)
 
 
     def transform_point(self, point):
