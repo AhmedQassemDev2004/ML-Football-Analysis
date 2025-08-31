@@ -1,0 +1,58 @@
+# Video files
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.wmv
+*.flv
+*.webm
+input_videos/
+output_videos/
+
+# Model files and weights
+*.pt
+*.pth
+*.onnx
+*.h5
+*.pkl
+models/
+stubs/
+
+# Training runs and logs
+runs/
+logs/
+wandb/
+tensorboard/
+
+# Large datasets
+datasets/
+data/
+
+# Cache and temporary files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.cache/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

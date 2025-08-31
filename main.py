@@ -6,6 +6,8 @@ from trackers import Tracker
 from config import *
 from player_ball_assigner import PlayerBallAssigner
 from camera_movement_estimator import CameraMovementEstimator
+from view_transformer import ViewTransformer
+
 
 def main():
     video_frames = read_video(INPUT_VIDEO_PATH)
@@ -28,7 +30,13 @@ def main():
     print(f"Number of player track frames: {len(tracks['players'])}")
     print(f"Number of ball track frames: {len(tracks['ball'])}")
     print(f"Number of referee track frames: {len(tracks['referees'])}")
-    
+
+
+    # View Transformer
+    view_transformer = ViewTransformer()
+    view_transformer.add_transformed_position_to_tracks(tracks)
+
+
     team_assigner = TeamAssigner()
     team_assigner.assign_team_color(video_frames[0], tracks['players'][0])
 
