@@ -47,7 +47,7 @@ This project takes raw broadcast video as input and outputs an **annotated video
 
 1. Clone the repository:  
 ```bash
-git clone https://github.com/yourusername/football_analysis.git
+git clone https://github.com/AhmedQassemDev2004/computer-vision-football-analysis/
 cd football_analysis
 ```
 
@@ -56,7 +56,7 @@ cd football_analysis
 pip install -r requirements.txt
 ```
 
-3. Download YOLO model weights and place them in `models/` (update `config.py` with the correct path).  
+3. Download 'best.pt' model weights and place them in `models/` (update `config.py` with the correct path).  
 
 ---
 
