@@ -2,207 +2,205 @@ from ultralytics import YOLO
 import supervision as sv
 import pickle
 import os
-from utils import get_bbox_width, get_center_of_bbox, get_foot_position 
+from utils import get_bbox_width, get_center_of_bbox, get_foot_position
 import cv2
 import numpy as np
 from config import *
 import pandas as pd
+
 
 class Tracker:
     def __init__(self, model_path):
         self.model = YOLO(model_path)
         self.tracker = sv.ByteTrack()
 
-    def add_position_to_tracks(self,tracks):
-        for object, object_tracks in tracks.items():
-            for frame_num, track in enumerate(object_tracks):
-                for track_id, track_info in track.items():
-                    bbox = track_info['bbox']
-                    if object == 'ball':
-                        position= get_center_of_bbox(bbox)
+    def add_position_to_tracks(self, tracks):
+        for obj_type, object_tracks in tracks.items():
+            for frame_num, track_frame in enumerate(object_tracks):
+                for track_id, track_info in track_frame.items():
+                    bbox = track_info.get('bbox')
+                    if not bbox or len(bbox) != 4:
+                        continue
+                    if obj_type == 'ball':
+                        position = get_center_of_bbox(bbox)
                     else:
                         position = get_foot_position(bbox)
-                    tracks[object][frame_num][track_id]['position'] = position
+                    tracks[obj_type][frame_num][track_id]['position'] = position
 
     def interpolate_ball_positions(self, ball_positions):
-        ball_positions = [x.get(1, {}).get('bbox', []) for x in ball_positions]
-        
-        df_ball_positions = pd.DataFrame(ball_positions)
-        df_ball_positions = df_ball_positions.interpolate()
-        df_ball_positions = df_ball_positions.bfill()  # for special case when the first detection is missing
-        
-        # Fill any remaining NaN values with empty lists to avoid conversion errors
-        df_ball_positions = df_ball_positions.fillna(0)
+        # Replace missing or zeroed bboxes with None
+        bboxes = []
+        for frame in ball_positions:
+            bbox = frame.get(1, {}).get('bbox')
+            if bbox is None or bbox == [0, 0, 0, 0]:
+                bboxes.append([None, None, None, None])
+            else:
+                bboxes.append(bbox)
 
-        ball_positions = [{1: {'bbox':x}} for x in df_ball_positions.to_numpy().tolist()]
-
-        return ball_positions
-        
-
+        df = pd.DataFrame(bboxes)
+        df = df.interpolate().bfill().ffill()
+        return [{1: {'bbox': row.tolist()}} for _, row in df.iterrows()]
 
     def detect_frames(self, frames):
         detections = []
         for i in range(0, len(frames), BATCH_SIZE):
-            detection_batch = self.model.predict(frames[i:i+BATCH_SIZE], conf=CONFIDENCE_THRESHOLD)
-            detections.extend(detection_batch)
-
+            batch = self.model.predict(frames[i:i + BATCH_SIZE], conf=CONFIDENCE_THRESHOLD)
+            detections.extend(batch)
         return detections
 
     def get_object_tracks(self, frames, read_from_stub=False, stub_path=None):
-        
-        if read_from_stub and stub_path is not None and os.path.exists(stub_path):
-            with open(stub_path,'rb') as f:
-                tracks = pickle.load(f)
-            return tracks
+        if read_from_stub and stub_path and os.path.exists(stub_path):
+            with open(stub_path, 'rb') as f:
+                return pickle.load(f)
 
         detections = self.detect_frames(frames)
-
-        tracks={
-            "players":[],
-            "referees":[],
-            "ball":[]
-        }
+        tracks = {"players": [], "referees": [], "ball": []}
 
         for frame_num, detection in enumerate(detections):
             cls_names = detection.names
-            cls_names_inv = {v:k for k,v in cls_names.items()}
-
-            # Covert to supervision Detection format
+            cls_names_inv = {v: k for k, v in cls_names.items()}
             detection_supervision = sv.Detections.from_ultralytics(detection)
 
-            # Convert GoalKeeper to player object
-            for object_ind , class_id in enumerate(detection_supervision.class_id):
+            # Convert GoalKeeper to player
+            for idx, class_id in enumerate(detection_supervision.class_id):
                 if cls_names[class_id] == "goalkeeper":
-                    detection_supervision.class_id[object_ind] = cls_names_inv["player"]
+                    detection_supervision.class_id[idx] = cls_names_inv["player"]
 
-            # Track Objects
-            detection_with_tracks = self.tracker.update_with_detections(detection_supervision)
+            tracked = self.tracker.update_with_detections(detection_supervision)
 
             tracks["players"].append({})
             tracks["referees"].append({})
             tracks["ball"].append({})
 
-            for frame_detection in detection_with_tracks:
-                bbox = frame_detection[0].tolist()
-                cls_id = frame_detection[3]
-                track_id = frame_detection[4]
-
+            # Add tracked players/referees
+            for det in tracked:
+                bbox, cls_id, track_id = det[0].tolist(), det[3], det[4]
                 if cls_id == cls_names_inv['player']:
-                    tracks["players"][frame_num][track_id] = {"bbox":bbox}
-                
-                if cls_id == cls_names_inv['referee']:
-                    tracks["referees"][frame_num][track_id] = {"bbox":bbox}
-            
-            for frame_detection in detection_supervision:
-                bbox = frame_detection[0].tolist()
-                cls_id = frame_detection[3]
+                    tracks["players"][frame_num][track_id] = {"bbox": bbox}
+                elif cls_id == cls_names_inv['referee']:
+                    tracks["referees"][frame_num][track_id] = {"bbox": bbox}
 
+            # Add ball detections
+            for det in detection_supervision:
+                bbox, cls_id = det[0].tolist(), det[3]
                 if cls_id == cls_names_inv['ball']:
-                    tracks["ball"][frame_num][1] = {"bbox":bbox}
+                    tracks["ball"][frame_num][1] = {"bbox": bbox}
 
-        if stub_path is not None:
-            with open(stub_path,'wb') as f:
-                pickle.dump(tracks,f)
+        if stub_path:
+            with open(stub_path, 'wb') as f:
+                pickle.dump(tracks, f)
 
         return tracks
 
-    def draw_team_ball_control(self, frame, frame_num, team_ball_control):
-        # Draw team ball control overlay
+    # ---------------- DRAWING ---------------- #
+
+    def draw_player_marker(self, frame, bbox, color, track_id=None, has_ball=False):
+        x_center, y_bottom = get_center_of_bbox(bbox)
+        y_bottom = int(bbox[3])
+
         overlay = frame.copy()
-        cv2.rectangle(overlay, (1350, 850), (1900, 970), (255, 255, 255), -1)
-        alpha = 0.4
-        cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
-        
-        team_ball_control_till_frame = team_ball_control[:frame_num+1]
-        
-        # Get team 1 and team 2 control counts
-        team_1_num_frames = team_ball_control_till_frame.count(1)
-        team_2_num_frames = team_ball_control_till_frame.count(2)
-        team_1 = team_1_num_frames/(team_1_num_frames+team_2_num_frames)
-        team_2 = team_2_num_frames/(team_1_num_frames+team_2_num_frames)
+        cv2.circle(overlay, (x_center, y_bottom), 20, color, -1)
+        cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
+        cv2.circle(frame, (x_center, y_bottom), 20, (0, 0, 0), 2)
 
-        cv2.putText(frame, f"Team 1 Ball Control: {team_1*100:.1f}%",(1400,890), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,0), 3)
-        cv2.putText(frame, f"Team 2 Ball Control: {team_2*100:.1f}%",(1400,940), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,0), 3)
+        if has_ball:
+            cv2.circle(frame, (x_center, y_bottom), 28, (0, 0, 255), 3)
 
-        return frame  
+        if track_id is not None:
+            cv2.putText(frame, str(track_id), (x_center - 10, y_bottom - 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 3)
+            cv2.putText(frame, str(track_id), (x_center - 10, y_bottom - 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1)
+
+        return frame
+
+    def draw_referee_marker(self, frame, bbox):
+        x_center, y_bottom = get_center_of_bbox(bbox)
+        y_bottom = int(bbox[3])
+        cv2.rectangle(frame, (x_center - 5, y_bottom - 5),
+                      (x_center + 5, y_bottom + 5), (0, 255, 255), -1)
+        return frame
+
+    def draw_ball_marker(self, frame, bbox):
+        x, y = get_center_of_bbox(bbox)
+        cv2.circle(frame, (x, y), 8, (255, 255, 255), -1)
+        cv2.circle(frame, (x, y), 10, (0, 0, 0), 2)
+        cv2.circle(frame, (x, y), 15, (0, 255, 255), 2)
+        return frame
+
+    def draw_team_ball_control(self, frame, frame_num, team_ball_control, team_colors=None):
+        overlay = frame.copy()
+        h, w = frame.shape[:2]
+
+        bar_x1, bar_y1 = 100, h - 30
+        bar_x2, bar_y2 = w - 100, h - 10
+
+        # Count frames
+        team_control_frame = team_ball_control[:frame_num + 1]
+        team_counts = {}
+        for team_id in set(team_control_frame):
+            team_counts[team_id] = team_control_frame.count(team_id)
+        total = max(1, sum(team_counts.values()))
+
+        x_start = bar_x1
+        for team_id, count in team_counts.items():
+            ratio = count / total
+            color = team_colors.get(team_id, (0, 0, 255)) if team_colors else (0, 0, 255)
+            x_end = x_start + int((bar_x2 - bar_x1) * ratio)
+
+            # Draw bar section
+            cv2.rectangle(overlay, (x_start, bar_y1), (x_end, bar_y2), color, -1)
+
+            percentage = int(ratio * 100)
+            text = f"{percentage}% ({count})"
+            text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
+
+            text_x = x_start + (x_end - x_start - text_size[0]) // 2
+            text_y = bar_y1 - 8  # slightly above the bar
+
+            cv2.putText(frame, text, (text_x, text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 3)  # shadow
+            cv2.putText(frame, text, (text_x, text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+
+            x_start = x_end
+
+        cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+        return frame
+
     def draw_annotations(self, video_frames, tracks, team_ball_control):
         output_video_frames = []
+
+        # Get team colors from first frame
+        if tracks['players']:
+            first_frame_players = tracks['players'][0]
+            team_colors = {p['team_id']: p['team_color'] for p in first_frame_players.values() if 'team_id' in p}
+        else:
+            team_colors = {}
+
         for frame_num, frame in enumerate(video_frames):
             frame = frame.copy()
             try:
                 players_dict = tracks['players'][frame_num]
                 referees_dict = tracks['referees'][frame_num]
                 ball_dict = tracks['ball'][frame_num]
-            except (IndexError, KeyError) as e:
-                print(f"Warning: Missing data for frame {frame_num}: {e}")
+            except (IndexError, KeyError):
+                output_video_frames.append(frame)
                 continue
 
-            # draw players
             for track_id, player in players_dict.items():
-                frame = self.draw_ellipse(frame, player['bbox'], player['team_color'], track_id)
-                if player.get('has_ball', False):
-                    frame = self.draw_traingle(frame, player['bbox'], (0, 0, 255))
+                frame = self.draw_player_marker(
+                    frame, player['bbox'], player['team_color'],
+                    track_id, has_ball=player.get('has_ball', False)
+                )
 
-            # draw referees
             for _, referee in referees_dict.items():
-                frame = self.draw_ellipse(frame, referee['bbox'], REFEREE_COLOR)
-            
-            # draw ball
-            for track_id, ball in ball_dict.items():
-                frame = self.draw_traingle(frame, ball['bbox'], BALL_COLOR)
-            
-            # draw ball control for each team
-            frame = self.draw_team_ball_control(frame, frame_num, team_ball_control)
-           
+                frame = self.draw_referee_marker(frame, referee['bbox'])
+
+            for _, ball in ball_dict.items():
+                frame = self.draw_ball_marker(frame, ball['bbox'])
+
+            frame = self.draw_team_ball_control(frame, frame_num, team_ball_control, team_colors)
             output_video_frames.append(frame)
-        
+
         return output_video_frames
-
-    def draw_ellipse(self, frame, bbox, color, track_id=None):
-        y2 = int(bbox[3])
-        x_center, _ = get_center_of_bbox(bbox)
-        bbox_width = get_bbox_width(bbox)
-
-        cv2.ellipse(
-            frame,
-            center=(x_center, y2), # to make the ellipse at bottom center not the box center
-            axes=(int(bbox_width), int(bbox_width*0.35)),
-            color=color,
-            angle=0,
-            startAngle=-45,
-            endAngle=225, # startAngle and endAngle determines which parts of the ellipse will be drawn
-            thickness=ELLIPSE_THICKNESS,
-            lineType=cv2.LINE_4,
-        )
-
-        
-        # put the track id under each player
-        if track_id is not None:
-            x1_rect = x_center - RECTANGLE_WIDTH / 2
-            x2_rect = x_center + RECTANGLE_WIDTH / 2
-            y1_rect = (y2-RECTANGLE_HEIGHT//2)+15
-            y2_rect = (y2+RECTANGLE_HEIGHT//2)+15
-            
-            # Draw a white rectangle
-            cv2.rectangle(frame, (int(x1_rect), int(y1_rect)), (int(x2_rect), int(y2_rect)), BACKGROUND_COLOR, -1)
-
-            # Add black text on top of the white rectangle
-            cv2.putText(frame, str(track_id), (int(x1_rect+12), int(y1_rect + 15)), 
-                        cv2.FONT_HERSHEY_SIMPLEX, FONT_SCALE, TEXT_COLOR, FONT_THICKNESS)
-
-        return frame
-
-    def draw_traingle(self,frame,bbox,color):
-    
-        y= int(bbox[1])
-        x,_ = get_center_of_bbox(bbox)
-
-        triangle_points = np.array([
-            [x,y],
-            [x-10,y-20],
-            [x+10,y-20],
-        ])
-        cv2.drawContours(frame, [triangle_points],0,color, cv2.FILLED)
-        cv2.drawContours(frame, [triangle_points],0,(0,0,0), 2)
-
-        return frame

@@ -29,6 +29,7 @@ class SpeedDistanceEstimator():
 
                     distance_covered = measure_distance(start_position, end_position)
                     time_elapsed = (last_frame - frame_num) / self.frame_rate
+                    if time_elapsed == 0: time_elapsed=0.0001
                     speed_meteres_per_second = distance_covered / time_elapsed
                     speed_km_per_hour = speed_meteres_per_second * 3.6
 
@@ -49,25 +50,44 @@ class SpeedDistanceEstimator():
     def draw_speed_and_distance(self, frames, tracks):
         output_frames = []
         for frame_num, frame in enumerate(frames):
+            frame = frame.copy()
             for object, object_tracks in tracks.items():
                 if object == "ball" or object == "referees":
                     continue
+
                 for _, track_info in object_tracks[frame_num].items():
-                    if "speed" in track_info:
-                        speed = track_info.get('speed', None)
-                        distance = track_info.get('distance', None)
-                        if speed is None or distance is None:
-                            continue
+                    if "speed" not in track_info or "distance" not in track_info:
+                        continue
 
-                        bbox = track_info['bbox']
-                        position = get_foot_position(bbox)
-                        position = list(position)
-                        position[1] += 40
+                    speed = track_info['speed']
+                    distance = track_info['distance']
+                    bbox = track_info['bbox']
 
-                        position = tuple(map(int, position))
-                        cv2.putText(frame, f"{speed:.2f} km/h", position, cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
-                        cv2.putText(frame, f"{distance:.2f} m", (position[0], position[1] + 20),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+                    # Position box above player head
+                    x, y = get_foot_position(bbox)
+                    y = int(bbox[1]) - 30  # above top of bbox
+                    x = int((bbox[0] + bbox[2]) / 2)
+
+                    # Text lines
+                    text1 = f"{speed:.1f} km/h"
+                    text2 = f"{distance:.1f} m"
+
+                    # Background box (semi-transparent)
+                    (w1, h1), _ = cv2.getTextSize(text1, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+                    (w2, h2), _ = cv2.getTextSize(text2, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+                    box_w = max(w1, w2) + 12
+                    box_h = h1 + h2 + 14
+
+                    overlay = frame.copy()
+                    cv2.rectangle(overlay, (x - box_w // 2, y - box_h),
+                                  (x + box_w // 2, y), (0, 0, 0), -1)
+                    cv2.addWeighted(overlay, 0.5, frame, 0.5, 0, frame)
+
+                    # Draw text (white with black shadow for readability)
+                    cv2.putText(frame, text1, (x - w1 // 2, y - 5),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                    cv2.putText(frame, text2, (x - w2 // 2, y + h2),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+
             output_frames.append(frame)
-
         return output_frames
