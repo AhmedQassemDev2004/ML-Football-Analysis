@@ -4,9 +4,33 @@ import pickle
 import os
 from utils import get_bbox_width, get_center_of_bbox, get_foot_position
 import cv2
+import gzip
 import numpy as np
 from config import *
 import pandas as pd
+import hashlib
+
+
+STUB_DIR = "stubs"
+os.makedirs(STUB_DIR, exist_ok=True)
+
+
+def compute_file_hash(filepath, block_size=65536):
+    """Compute MD5 hash of a file for cache validation."""
+    md5 = hashlib.md5()
+    with open(filepath, "rb") as f:
+        for block in iter(lambda: f.read(block_size), b""):
+            md5.update(block)
+    return md5.hexdigest()
+
+
+def get_stub_path(video_path, config):
+    """Generate reproducible stub filename based on video + config."""
+    base_name = os.path.splitext(os.path.basename(video_path))[0]
+    video_hash = compute_file_hash(video_path)[:8] if video_path else "nohash"
+    config_hash = hashlib.md5(str(config).encode()).hexdigest()[:8]
+    stub_name = f"{base_name}_{video_hash}_{config_hash}.pkl.gz"
+    return os.path.join(STUB_DIR, stub_name)
 
 
 class Tracker:
@@ -28,7 +52,6 @@ class Tracker:
                     tracks[obj_type][frame_num][track_id]['position'] = position
 
     def interpolate_ball_positions(self, ball_positions):
-        # Replace missing or zeroed bboxes with None
         bboxes = []
         for frame in ball_positions:
             bbox = frame.get(1, {}).get('bbox')
@@ -48,11 +71,24 @@ class Tracker:
             detections.extend(batch)
         return detections
 
-    def get_object_tracks(self, frames, read_from_stub=False, stub_path=None):
-        if read_from_stub and stub_path and os.path.exists(stub_path):
-            with open(stub_path, 'rb') as f:
-                return pickle.load(f)
+    def get_object_tracks(self, frames, video_path, use_stub=True):
+        # Metadata for reproducibility
+        config = {
+            "model": MODEL_PATH,
+            "confidence": CONFIDENCE_THRESHOLD,
+            "batch_size": BATCH_SIZE,
+        }
 
+        stub_path = get_stub_path(video_path, config)
+
+        # === 1. Load Stub if Exists === #
+        if use_stub and os.path.exists(stub_path):
+            with gzip.open(stub_path, 'rb') as f:
+                saved = pickle.load(f)
+            print(f"[INFO] Loaded cached tracks from {stub_path} ✅")
+            return saved["tracks"]
+
+        # === 2. Run Detection + Tracking === #
         detections = self.detect_frames(frames)
         tracks = {"players": [], "referees": [], "ball": []}
 
@@ -61,7 +97,7 @@ class Tracker:
             cls_names_inv = {v: k for k, v in cls_names.items()}
             detection_supervision = sv.Detections.from_ultralytics(detection)
 
-            # Convert GoalKeeper to player
+            # Fix goalkeeper → player
             for idx, class_id in enumerate(detection_supervision.class_id):
                 if cls_names[class_id] == "goalkeeper":
                     detection_supervision.class_id[idx] = cls_names_inv["player"]
@@ -72,7 +108,6 @@ class Tracker:
             tracks["referees"].append({})
             tracks["ball"].append({})
 
-            # Add tracked players/referees
             for det in tracked:
                 bbox, cls_id, track_id = det[0].tolist(), det[3], det[4]
                 if cls_id == cls_names_inv['player']:
@@ -80,15 +115,15 @@ class Tracker:
                 elif cls_id == cls_names_inv['referee']:
                     tracks["referees"][frame_num][track_id] = {"bbox": bbox}
 
-            # Add ball detections
             for det in detection_supervision:
                 bbox, cls_id = det[0].tolist(), det[3]
                 if cls_id == cls_names_inv['ball']:
                     tracks["ball"][frame_num][1] = {"bbox": bbox}
 
-        if stub_path:
-            with open(stub_path, 'wb') as f:
-                pickle.dump(tracks, f)
+        # === 3. Save Stub === #
+        with gzip.open(stub_path, 'wb') as f:
+            pickle.dump({"config": config, "tracks": tracks}, f)
+        print(f"[INFO] Saved tracks to stub: {stub_path}")
 
         return tracks
 
@@ -132,10 +167,9 @@ class Tracker:
         overlay = frame.copy()
         h, w = frame.shape[:2]
 
-        bar_x1, bar_y1 = 100, h - 30
-        bar_x2, bar_y2 = w - 100, h - 10
+        bar_x1, bar_y1 = 100, h - 60
+        bar_x2, bar_y2 = w - 100, h - 20
 
-        # Count frames
         team_control_frame = team_ball_control[:frame_num + 1]
         team_counts = {}
         for team_id in set(team_control_frame):
@@ -148,30 +182,29 @@ class Tracker:
             color = team_colors.get(team_id, (0, 0, 255)) if team_colors else (0, 0, 255)
             x_end = x_start + int((bar_x2 - bar_x1) * ratio)
 
-            # Draw bar section
             cv2.rectangle(overlay, (x_start, bar_y1), (x_end, bar_y2), color, -1)
+            cv2.rectangle(overlay, (x_start, bar_y1), (x_end, bar_y2), (0, 0, 0), 3)
 
             percentage = int(ratio * 100)
             text = f"{percentage}% ({count})"
-            text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
+            text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0]
 
             text_x = x_start + (x_end - x_start - text_size[0]) // 2
-            text_y = bar_y1 - 8  # slightly above the bar
+            text_y = bar_y1 - 10
 
             cv2.putText(frame, text, (text_x, text_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 3)  # shadow
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 3)
             cv2.putText(frame, text, (text_x, text_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
             x_start = x_end
 
-        cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+        cv2.addWeighted(overlay, 0.9, frame, 0.1, 0, frame)
         return frame
 
     def draw_annotations(self, video_frames, tracks, team_ball_control):
         output_video_frames = []
 
-        # Get team colors from first frame
         if tracks['players']:
             first_frame_players = tracks['players'][0]
             team_colors = {p['team_id']: p['team_color'] for p in first_frame_players.values() if 'team_id' in p}

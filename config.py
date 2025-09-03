@@ -8,12 +8,12 @@ CONFIDENCE_THRESHOLD = 0.1
 BATCH_SIZE = 20
 
 # --- Video I/O --- #
-INPUT_VIDEO_PATH = "./input_videos/08fd33_4.mp4"
-OUTPUT_VIDEO_PATH = "./output_videos/output_video.avi"
+INPUT_VIDEO_PATH = "./input_videos/input_4.mp4"
+OUTPUT_VIDEO_PATH = "./output_videos/output_video_4.avi"
 
 # --- Stubs (for caching detections & movement) --- #
-STUB_PATH = "stubs/track_stubs_new.pkl"
-CAMERA_MOVEMENT_STUB = "stubs/camera_movement_stub.pkl"
+STUB_PATH = "stubs/track_stubs_new_4.pkl"
+CAMERA_MOVEMENT_STUB = "stubs/camera_movement_stub_4.pkl"
 
 # --- Processing --- #
 TEST_FRAMES_LIMIT = 30
